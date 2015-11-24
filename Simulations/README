@@ -1,0 +1,11 @@
+OwenP-2015.pdf:  includes instructions on how to use TBragg simulations
+Lin:  linux C codes for convertint COLLISIONS.TXT into usable simulation data
+Win:  Windows files you might need
+
+Note:  in OwenP-2015.pdf, only pages 22 to 26 are important.  That section
+tells you what you need to set up a TRIM simulation using SRIM 2013.
+
+tl;dr:  Ar:C:H 92:8:32; at 760 torr, rho  0.001544 g/cm^3
+
+
+
