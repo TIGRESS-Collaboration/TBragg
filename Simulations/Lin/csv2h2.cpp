@@ -27,7 +27,7 @@ float minx = 0;
 float miny = 0;
 float maxx = 500000;
 float maxy = 125000; // Some defautl values to be changed later
-int xbins  = 256;
+int xbins  = 1024;
 int ybins  = 256;
 
 int main(int argc, const char* argv[]) { // Not sure if I'll ever use this
@@ -55,7 +55,7 @@ int main(int argc, const char* argv[]) { // Not sure if I'll ever use this
 		maxx = atof(argv[1]);
 		maxy = atof(argv[2]);
 		xbins = atoi(argv[3]);
-		ybins = atoi(argv[3]);
+		ybins = atoi(argv[4]);
 	}	
 
 	if (argc == 5)
@@ -109,7 +109,7 @@ int main(int argc, const char* argv[]) { // Not sure if I'll ever use this
 	//graph->GetYaxis()->SetTitle("Short Filter (MeV)");
 	//graph->GetXaxis()->CenterTitle();
 	//graph->GetYaxis()->CenterTitle();
-	graph->Draw("PSAME");
+//	graph->Draw("PSAME");
 	c1->Draw();
 	c1->SaveAs("blah");
 	outFile->Write();

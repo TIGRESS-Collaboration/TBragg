@@ -340,8 +340,8 @@ int	totalIons = 0;//used to keep track of the total ions over all of the files. 
 string 	fileName;
 float 	initialEnergy[arraySize]; //initial energy for all of the ions
 float 	ionMass[arraySize]; //mass of the ion
-string 	ionName[arraySize]; //name of the ion (element)
-
+//string 	ionName[arraySize]; //name of the ion (element)
+string *ionName = new string[arraySize];
 	if (argc > 1) //reads through the number of files after the executable call of format "./TBraggSimulation Si28.txt Mo95.txt ..."
 	{
 		for (int i = 1; i < argc; i++)//looping over each argument in the above executable call
