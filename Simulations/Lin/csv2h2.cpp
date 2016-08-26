@@ -1,5 +1,18 @@
 
+/**
+ * g++ csv2h2.cpp -o csv2h2 `root-config --cflags --libs`    ----------  compile line
+ * Must be run with data piped in from TBragg Simulation:
+ * ./TBraggSimulation <collision file> | ./csv2h2
+*/
 
+
+/**
+ * File: csv2h2.cpp
+ * Last Modified By: Alex Kurkjian
+ * Date: 10/08/2016
+ * Purpose: This program simply pulls the data from the output of the TBragg simulation and plots
+ * 	on a histogram using ROOT.
+**/
 
 #include <Rtypes.h>
 #include <TCanvas.h>
@@ -25,18 +38,17 @@ using namespace std;
 
 float minx = 0;
 float miny = 0;
-float maxx = 500000;
-float maxy = 125000; // Some defautl values to be changed later
-int xbins  = 1024;
-int ybins  = 256;
+float maxx = 200000;
+float maxy = 100000; // Some default values which may be adjusted later
+int xbins  = 5000;
+int ybins  = 5000;
 
-int main(int argc, const char* argv[]) { // Not sure if I'll ever use this
+int main(int argc, const char* argv[]) { 
 	TApplication *app = new TApplication("app",0,0);
 	TFile* outFile = new TFile("graph.root", "RECREATE");
 	TCanvas *c1 = new TCanvas("c1","TBRAGG Simulation",200,10,700,500);
-	TH2I* histo;
-	TGraph* graph; // May upgrade to multiple graphs later
-	// gStyle->SetPalette(1);
+	TH2F* histo;
+
 	
 	if (argc == 2)
 	{
@@ -66,17 +78,11 @@ int main(int argc, const char* argv[]) { // Not sure if I'll ever use this
 		ybins = atoi(argv[4]);
 	}
 
-	histo = new TH2I("PID","Particle Identification Plot",xbins,minx,maxx,ybins,miny,maxy);
-	graph = new TGraph(); // hope this works
-	graph->SetMarkerStyle(8);
-	graph->SetMarkerSize(0.2);
-	graph->SetMarkerColor(3);
-	graph->GetXaxis()->SetTitle("Long Filter (MeV)");
-	graph->GetYaxis()->SetTitle("Short Filter (MeV)");
-	graph->GetXaxis()->CenterTitle();
-	graph->GetYaxis()->CenterTitle();
-	graph->SetTitle("Particle Identification Plot");
-
+	histo = new TH2F("PID","Particle Identification Plot",xbins,minx,maxx,ybins,miny,maxy);
+	//histo->SetXTitle("Long Filter"); 
+	//histo->SetYTitle("Short Filter");
+	histo->GetXaxis()->CenterTitle();
+	histo->GetYaxis()->CenterTitle();
 	
 	{ // Put this in braces so I can break it out somewhere else eventually
 		string line;
@@ -86,32 +92,22 @@ int main(int argc, const char* argv[]) { // Not sure if I'll ever use this
 			char* cpline = new char [line.length()+1];
 			strcpy(cpline,line.c_str());
 			char* pcy;
-			char* pcx; // after commas and/or white space
+			char* pcx; // After commas and/or white space
 			pcx = strtok(cpline,",");
 			if (pcx!=0) {
 				pcy = strtok(NULL,",");
 				//printf("%s\t%s\t%s\n",pcx,pcy, cpline);
-				if (pcy!=0) { // If this is a legitmate thing with two entries
+				if (pcy!=0) { // If the data entry is legitimate with x and y enties
 					x = atof(pcx);
 					y = atof(pcy);
-					// This needs to be thought through a bit better ....d
 					histo->Fill(x,y);
-					graph->SetPoint(graph->GetN(),x,y);
-				} // end of pcy!=0 condition
-			} // end of pcx!=0 condition
-		} // end of while getline condition
+				} // End of pcy!=0 condition
+			} // End of pcx!=0 condition
+		} // End of while getline condition
 	}
 	histo->DrawCopy("COLZ");
-	graph->SetMarkerStyle(8);
-	graph->SetMarkerSize(1);
-	//graph->SetMarkerColorAlpha(1,0.5);
-	//graph->GetXaxis()->SetTitle("Long Filter (MeV)");
-	//graph->GetYaxis()->SetTitle("Short Filter (MeV)");
-	//graph->GetXaxis()->CenterTitle();
-	//graph->GetYaxis()->CenterTitle();
-//	graph->Draw("PSAME");
 	c1->Draw();
-	c1->SaveAs("blah");
+	c1->SaveAs("PID_canvas.ps");
 	outFile->Write();
 	outFile->Close();
 
