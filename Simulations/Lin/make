@@ -1,4 +1,4 @@
 g++ csv2h2.cpp -o csv2h2 `root-config --cflags --libs`
 g++ -g -O0 -o TBraggSimulation TBraggSimulation.cpp
-./TBraggSimulation Si28-*.txt | ./csv2h2 &
+./TBraggSimulation SRIMData/Ne21M/21Ne* | ./csv2h2 &
 
