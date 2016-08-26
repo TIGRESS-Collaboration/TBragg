@@ -1,4 +1,40 @@
 TBraggSimulation.cpp:  code for extracting short & long signals from COLLISIONS files
 csv2h2.cpp:  takes output from above & graphs it nicely
-make:  A script that compiles the .cpps and runs them on the Si data
-Si28-*.txt:  sample data, showing punchthrough
+make:  A script that compiles the .cpps and runs them on the specified COLLISIONS files
+
+HOW TO RUN:
+
+COLLISION  *.txt files must be generated using SRIM before running the simulator. When doing so, one MUST first include the 1.5um Mylar window. This is crucial in order to ensure ions with high enough energies to punch through the Frisch grid are properly simulated for the tube length of 10.00 cm for the TBragg detector.
+
+For the simulation to work properly, ions must be simulated across its FULL RANGE of possible energies at regular intervals
+Example: Simulating for a beam of 21Ne at 95 MeV requires SRIM simulation data spanning 0 to 95 MeV. Typically 15 to 20 intervals will do well enough.
+
+To simply run TBraggSimulation.cpp alone:
+1) Compile: g++ -g -O0 -o TBraggSimulation TBraggSimulation.cpp
+2) Execute simulation: ./TBraggSimulation <COLLISION file list>
+
+This will output summaries of the collision file ions used, along with their short and long filter values to terminal.
+In addition, the following output files will be created:
+	- output_filter_data.txt: Holds the outputted short and long filter data, with each entry having an index # to match up with initial ion data
+	- output_ion_data.txt: Holds the initial ion summary information, as pulled from the Collision files. Each ion entry has an index # to match it with its filter data
+
+
+To generate a plot immediately after simulation:
+1) Modify the file make to reflect the path of the Collision files used in the simulation
+2) Run ./make
+3) The same output files are generated as in running TBRaggSimulation.cpp alone
+
+
+Note: csv2h2 is run by multitasking it in the make script, which will in turn begin to general a plethora of lockfiles unless those csv2h2 processes are killed.
+
+To do this there are a couple methods:
+1) Proper careful method
+ - determine the process id's of the csv2h2 script instances and terminate them individually:
+   $ pgrep csv2h2
+   $ kill <process id>
+2) Quick and easy, but brutish method:
+ - Kill all csv2h2 processes at once:
+   $ killall csv2h2
+   
+Then the lockfiles may be deleted.
+

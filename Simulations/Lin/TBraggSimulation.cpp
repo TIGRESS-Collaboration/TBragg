@@ -1,25 +1,42 @@
-//g++ -g -O0 -o TBraggSimulation TBraggSimulation_v5.cpp      ------------    compiler line
-//To run program, use following command : cat fileName (multiple files) |./TBraggSimulation OR ./TBraggSimulation fileName (multiple files)
-//It can do multiple isotopes at a time where said files are Collision files from SRIM simulations.
-//Ability to change parameters from the command line. Use the syntax of "./TBraggSimulation --parameter value fileName". This can be done for multiple parameters
+/**
+ * g++ -g -O0 -o TBraggSimulation TBraggSimulation.cpp      ------------    compiler line
+ * To run program, use following command:
+ *		cat fileName (multiple files) |./TBraggSimulation 
+ * or:
+ *		./TBraggSimulation fileName (multiple files)
+ * Can handle SRIM collision data from multiple isotopes
+ * Ability to change (multiple) parameters from the command line: 
+ *		./TBraggSimulation --parameter value fileName
+**/
 
-
-//------------------------------------------------------Owen Paetkau----------------------------------------------------------------------------------------------------------------------------
-//----------------------TBragg Simulation---------------31/07/2015-------------------v5 Changes-------------------------------------------------------------------------------------------------
-//----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-//-----This program is able to take the Collision files found -----------------------05/08/2015 - Added a count to keep track of the total ions as well as an array that stores the number of---
-//-----in the SRIM output and apply short and long energy filters--------------------ions in each file with a corresponding isotope (or file) number. This removes the need to assume the-------
-//-----to determine the total energy and shape of the Bragg peak.--------------------number of ions in each file making the readout more complete.----------------------------------------------
-//-----This allows you to do proper particle identification in-----------------------NOTE : Any changes to parameters must come before the file names so they affect the analysis.--------------
-//-----combination with the SRIM software.------------------------------------------------------------------------------------------------------------------------------------------------------
-//----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-//-----This version has complete functionality and will allow-----------------------------------------------------------------------------------------------------------------------------------
-//-----up to 10000 ions and 10000 collisions per ion. It will-----------------------------------------------------------------------------------------------------------------------------------
-//-----output a list of short and long filters in keV for each----------------------------------------------------------------------------------------------------------------------------------
-//-----ion as well as the initial conditions of the simulations.--------------------------------------------------------------------------------------------------------------------------------
-//----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-//----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-//----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+/**
+ * Program Name: TBragg Simulation, v6
+ * File: TBraggSimulation.cpp
+ * Last Modified By: Alex Kurkjian
+ * Date: 26/08/2016
+ * Purpose: This program is meant to take ion collision data (as simulated in SRIM/TRIM) and apply  
+ * 	short and long energy filters to approximate energy and shape of the Bragg peak. The idea is to 
+ * 	be able to simulate particle identification using the TBragg detector with multiple isotopes of 
+ * 	similar atomic mass number (example: Sr-94, Rb-94, and Mo-94). The advantage to running the 
+ * 	simulation is to determine if the expected constituents of a cocktail beam will be 
+ *	distinguishable, and thus will help determine what to expect for beam tuning and the 
+ * 	performance of diagnostics.
+ * Changes from Previous Version (v5):
+ * 	- Adjusted maxDepth to represent proper depth for the TBragg detector (10.00 cm)
+ *	- Implemented a new effDepth which is meant to simulate the different drift velocities between the 
+ *	  Frisch grid and anode, in comparison to between the Mylar window and the Frisch grid
+ *		--> Should note that while this may more accurately simulate the TBragg, it has little
+ *			noticeable effect in the simulation results
+ *  - Added an impulse response function more effectively simulate the more gradual curve that results 
+ * 	  in the PID charts from the TBragg detector.
+ *		--> Implements a simple moving average over the energy values. The number of energy values 
+ * 			sampled in the moving average can be changed. 
+ *	- Arrays storing energy values are now explicitly overwritten before opening and reading collision
+ *	  data from a new file
+ *	- Added the capability to output simulation data (short and long filters values) to file for 
+ *	  potential further analysis
+ *	- Tweaked some formatting, added/changed comments as necessary
+**/
 
 #include <iostream>
 #include <istream>
@@ -37,89 +54,88 @@
 #include <string>
 
 using namespace std;
-float adcSampleRate = 0.02;//sample rate in microseconds
-float l_peakt = 0.5; //long peak time in microseconds
-float l_gapt = 4.5; //long gap time in microseconds
-float s_peakt = 0.14; //short peak tme in microseconds
-float s_gapt = 0.24; // short gap time in microseconds
-float driftVel = 4.8;//drift velocity in cm/micron
-float minDepth = 15000; //beginning of active volume in angstroms
-float maxDepth = 12.28; //chamber length in centimetres
-int   conver = 100000000; //converting centimeters to angstroms
-int   arraySize = 10000; //size of all arrays in this program (potential location of segmentation fault if not large enough)
-int   maxSamples = maxDepth / (driftVel * adcSampleRate); //maximum samples allowed due to the adc
+float	adcSampleRate = 0.02;			// Sample rate in microseconds
+float 	l_peakt = 0.5; 					// Long peak time in microseconds
+float 	l_gapt = 4.5; 					// Long gap time in microseconds
+float 	s_peakt = 0.14; 				// Short peak tme in microseconds
+float 	s_gapt = 0.24; 					// Short gap time in microseconds
+float 	driftVel = 4.8;					// Drift velocity in cm/usec for most of the tube
+float 	driftVelFschAn = 4.8; 			// Drift velocity in cm/usec between Frisch grid and Anode
+float 	minDepth = 15000; 				// Beginning of active volume in angstroms
+float 	maxDepth = 10.00; 				// Chamber length in centimetres
+float 	fschDist = 0.01; 				// Distance from Frisch Grid to Anode in centimeters 
+float 	effDepth = maxDepth-fschDist; 	// Effective Depth of the ionization chamber
+int   	conver = 100000000;	 			// Converting centimeters to angstroms
+int   	arraySize = 10000; 				// Size of all arrays in this program 
+										// (potential segmentation fault if not large enough)
+int 	respRange = 35;					// Impulse response sample range
+int   	maxSamples = (int) (effDepth/(driftVel*adcSampleRate) 
+			+ fschDist/(driftVelFschAn*adcSampleRate)); // Maximum samples allowed due to the adc
 
 
-float average (float energyValues[], int pos, float peakt) //determine the average value in some window
-{
+float average (float energyValues[], int pos, float peakt) { 
+	float  average = 0;
+	int    count = 0;
 
-float  average = 0;
-int    count = 0;
-
-//printf("%d\t%d\n", pos, pos + (int)(peakt/adcSampleRate));
-	for (int i = pos; i < (pos + (int)(peakt/ adcSampleRate)); i++)
-	{
-		if ( i < 0)
-		{
-			average = average + energyValues[0];
+	//printf("%d\t%d\n", pos, pos + (int)(peakt/adcSampleRate));
+	// Loop through the array indexes as specified by pos and peakt
+	for (int i = pos; i < (pos + (int)(peakt / adcSampleRate)); i++) { 
+		if (i < 0) {
+			average += energyValues[0];
 			count++;
 			//printf("\tsum : %.2f\taverage : %.2fkeV\t[%d]: %.2f\t count: %d\n", average, average / count, i, energyValues[i], count);
-		}
-		
-		else if (i > (maxSamples - 1))
-		{
-			average = average + energyValues[maxSamples - 1];
+		} else if (i > (maxSamples - 1)) {
+			average += energyValues[maxSamples - 1];
 			count++;
 			//printf("\tsum : %.2f\taverage : %.2fkeV\t[%d]: %.2f\t count: %d\n", average, average / count, i, energyValues[i], count);
-		}
-		
-		else
-		{
-			average = average + energyValues[i];
+		} else {
+			average += energyValues[i];
 			count++;
 			//printf("\tsum : %.2f\taverage : %.2fkeV\t[%d]: %.2f\t count: %d\n",average, average / count, i, energyValues[i], count);
-		}
-		
+		}	
 	}
 	//printf("average = %.2f / %d = %.2f\n", average, count, average / count);	
 	average = average / count;
 	return average;
 }
 
-float sampledEnergies ( float ionDistance[], float ionEnergy[], float closeEnergy[], int collisionNum) //simulates the position and time and then draws an energy value from the text file.
-{												   
+float sampledEnergies (float ionDistance[], float ionEnergy[], float closeEnergy[], int collisionNum) { 
+	float 	simPos[arraySize]; 	// Simulated position according to sample rate and chamber length
+	float	samTime[arraySize]; // Simulated time according to sample rate and chamber length
+	float	anodeDistance;		// Distance from the anode
+	int 	fschCount, loopCount;
 
-float 	simPos[arraySize];//simulated position according to sample rate and chamber length
-float	samTime[arraySize];//simulated time according to sample rate and chamber length
-float	anodeDistance;
+	for (int i = 0; i < maxSamples; i++) {
+		fschCount = 0;
+		loopCount = 0;
+		samTime[i] = i*adcSampleRate; // Simulates elapsed time from sample rate and iteration
 
-	for (int i = 0; i < maxSamples; i++)
-	{
-		samTime[i] = i * adcSampleRate; //simulates the time due to the sample rate and length of the chamber
-		simPos[i] = (maxDepth - (driftVel * samTime[i])) * conver;//simulates the position from the time and drift velocity.
-		//printf("%.2f\t%.2f\n",samTime[i],simPos[i]);
-	
-		int loopcount = 0;
-
-		if ( simPos[i] > minDepth)//to account for a minimum active depth (in most cases the mylar window
-		{	
-			for (loopcount; loopcount < collisionNum; loopcount++)//searches through the file for an energy corresponding to a value close to the simulated position
-			{
-				anodeDistance = (maxDepth * conver) - ionDistance[loopcount];
-		
-				if (simPos[i] > anodeDistance)//once value is found, terminates loop and writes energy to array
-				{
-					closeEnergy[i] = ionEnergy[loopcount];
-					//printf("%.2f\t%.2f\n",anodeDistance,closeEnergy[i]);
-					loopcount = collisionNum;
-				}
-			}
+		if (effDepth <= (driftVel * samTime[i]) ) { // If the ion is past the Frisch grid
+			// Simulate the position from the time and drift velocity between Frisch grid and Anode
+			simPos[i] = (maxDepth - effDepth - (driftVelFschAn*(samTime[i]) - samTime[fschCount]))*conver; 
+			//printf("%.2f\t%.2f\n",samTime[i],simPos[i]);
+		} else { // Ion is still in the main body of the detector
+			// Simulate position based off time and drift velocity
+			simPos[i] = (maxDepth - (driftVel*samTime[i]))*conver; 
+			fschCount = i;
 		}
+	
+		
+		// Ensures that the energy drawn from text file is ONLY if an ion gets past the Mylar
+		if (simPos[i] > minDepth) { 
+			// Loop through energy values for one near-matching the simulated position			
+			for (loopCount; loopCount < collisionNum; loopCount++) { 				
+				anodeDistance = (maxDepth*conver) - ionDistance[loopCount];				
 
-		else//removes points below minDepth by ending the loop
-		{
-			for (int j = i; j < maxSamples; j++)//fills remaining points in the array before terminating the loop
-			{
+				if (simPos[i] > anodeDistance) { // Once found, end loop and write energy to array
+					closeEnergy[i] = ionEnergy[loopCount];
+					//printf("%.2f\t%.2f\n",anodeDistance,closeEnergy[i]);					
+					loopCount = collisionNum;
+				}		
+			}
+		} else { // Removes points below minDepth by ending the loop
+			// Fill remaining points in the array before terminating the loop
+			for (int j = i; j < maxSamples; j++) { 
 				closeEnergy[j] = closeEnergy[i - 1];
 			}			
 
@@ -129,26 +145,52 @@ float	anodeDistance;
 	}
 } 
 
-float energyFilters (float energyArray[], float peakt, int gapt, int nsamples)//long or short filter is determined from peak and gap times
-{
 
-float	difference = 0;
-float 	maxValue = 0;
-float	window1;
-float 	window2;	
+float impulseResponse (float energyArray[], float responseArray[], int responseRange, int nsamples) { 
+	float	sum = 0;	
+	int 	k, l;
 
-	for (int i = - 5; i < nsamples; i++)//subtracted a value to give more complete samples on either side of the curve
-	{	
+	
+		// Simple moving average			
+		for (k = 0; k < nsamples; k++) { // Loop for each possible index of the impulse response
+			// The following performs a similar function to the above average() function
+			for (l = k - responseRange; l < k; l++) { // loop through and summ the energy values within the range of the impulse response
+				if (l < 0) {
+					sum = sum;
+					//sum += energyArray[0];
+				} else if (l > nsamples - 1) {
+					//sum += energyArray[nsamples - 1];
+					sum = sum;
+				} else {
+					sum += energyArray[l];
+					//printf("i = %d\t j = %d\t sum = %.2f\n", i, j, sum);				
+				}
+			}			
+		
+			responseArray[k] = (sum / responseRange );
+			//printf("i = %d\t Actual Energy = %.2f\t Impulse average = %.2f\n", k, energyArray[k], responseArray[k]);
+			sum = 0;
+		} 	
+	
+
+} 
+
+float energyFilters (float energyArray[], float peakt, int gapt, int nsamples) { // Long or short filter is determined from peak and gap times
+	float	difference = 0;
+	float 	maxValue = 0;
+	float	window1;
+	float 	window2;	
+
+	for (int i = -5; i < nsamples; i++) { // Subtracted a value to give more complete samples on either side of the curve
 		window1 = average(energyArray, i, peakt);
 		window2 = average(energyArray, i + gapt, peakt);
 
 		difference = window1 - window2;
 
-		//printf("%f\t%f\n",energyArray[i],lwindow1);
+		//printf("%f\t%f\n",energyArray[i],window1);
 		//printf("window1 - window2 = %.2f - %.2f = %.2f\n", window1, window2, difference);
 
-		if (difference > maxValue)
-		{
+		if (difference > maxValue) {
 			maxValue = difference;
 			//printf("%.2f\n", maxValue);
 		}
@@ -156,239 +198,247 @@ float 	window2;
 	return maxValue;
 }
 
-float processSRIMData (istream& srimCollisionDataSource, float shortFilter[], float longFilter[], string ionName[], float ionMass[], float initialEnergy[], int ionNum[], int *totalIonsP, int *isotopeCountP)
-{//ionMass, ionNum, initialEnergy and ionName written to arrays to account for multiple isotopes (ie., files)
+float processSRIMData (istream& srimCollisionDataSource, float shortFilter[], float longFilter[], string ionName[], float ionMass[], float initialEnergy[], int ionNum[], int *totalIonsP, int *isotopeCountP) { // IonMass, ionNum, initialEnergy and ionName written to arrays to account for multiple isotopes (ie., files)
 
-float 	X[arraySize];//array of positions from text file
-float 	E[arraySize];//array of energies from text file
-float	closeEnergy[arraySize];//energies drawn from the text file corresponding to the decided distances
+	float 	X[arraySize]; // Array of positions from text file
+	float 	E[arraySize]; // Array of energies from text file
+	float	closeEnergy[arraySize]; // Energies drawn from the text file corresponding to the decided distances
+	float 	measuredEnergy[arraySize]; // Energies "measured" after convultions from the Frisch grid or preamp
+	float	simPos[arraySize];
 
-int 	colNum = 0; //number of collisions
-int 	index, ionCount;
-int	maxNum = 1;
-bool 	readIon = false;
-string 	line;
+	int 	colNum = 0; // Number of collisions
+	int 	index, ionCount;
+	int		maxNum = 1;
+	bool 	readIon = false;
+	string 	line;
 
-	while ( getline (srimCollisionDataSource, line) )
-	{
-		if ( (line.length() > 30) && (line.substr (6,8).compare("Ion Name") == 0)) //determining element
-		{
+	while (getline(srimCollisionDataSource, line)) {
+		if ( (line.length() > 30) && (line.substr (6,8).compare("Ion Name") == 0)) { // Determining element
 			//(*ionNameP) = line.substr (23,2);
-			ionName[*isotopeCountP] = line.substr (23,2);//array to allow for multiple isotopes (ie., using cat command)
+			ionName[*isotopeCountP] = line.substr (23,2); // Array to allow for multiple isotopes (ie., using cat command)
 		}
 
-		if ( (line.length() > 30) && (line.substr (6,8).compare("Ion Mass") == 0)) //determining ion mass
-		{
+		if ( (line.length() > 30) && (line.substr (6,8).compare("Ion Mass") == 0)) { // Determining ion mass
 			//(*ionMassP) = strtof((line.substr (22,7)).c_str(),NULL);
 			ionMass[*isotopeCountP] = strtof((line.substr (22,7)).c_str(),NULL);
 		}
 
-		if ( (line.length() > 30) && (line.substr (6,10).compare("Ion Energy") == 0)) //determining initial energy
-		{
+		if ( (line.length() > 30) && (line.substr (6,10).compare("Ion Energy") == 0)) { // Determining initial energy
 			//(*initialEnergyP) = strtof((line.substr (18,11)).c_str(),NULL);
 			initialEnergy[*isotopeCountP] = strtof((line.substr (18,11)).c_str(),NULL);
-			*totalIonsP = *totalIonsP + ionNum[*isotopeCountP]; //keeps track of the total number of ions for storing purposes	
-			*isotopeCountP += 1;//keeps track of total number of isotopes in the system
+			*totalIonsP = *totalIonsP + ionNum[*isotopeCountP]; // Keeps track of the total number of ions for storing purposes	
+			*isotopeCountP += 1; // Keeps track of total number of isotopes in the system
 		}
 		
-		if ( line.substr (1,1).compare("0") == 0 || line.substr (1,1).compare("1") == 0 ) //identifying an ion line.
-		{
+		if ( line.substr (1,1).compare("0") == 0 || line.substr (1,1).compare("1") == 0 ) { // Identifying an ion line.
 			readIon = true;
 			ionCount = strtof((line.substr(1,5)).c_str(),NULL);
-			//printf("%d\n",colNum + 1);
 
 			X[colNum]  = atof ( (line.substr (17,10)).c_str() );
 			E[colNum]  = atof ( (line.substr (7,9)).c_str() ) ;
-
 			//printf("%.2f\t%.2f\n",X[colNum],E[colNum]);
 
-			//ionCount = ionCompare;
 			colNum += 1;
-		}
-		
-		else
-		{
-			if ( readIon == true ) // when end of ion is reached
-			{
-
-				sampledEnergies(X, E, closeEnergy, colNum);//used to simulate closeEnergy and store appropriate values within closeEnergy
-
+		} else {
+			if ( readIon == true ) { // When end of ion is reached
+				sampledEnergies(X, E, closeEnergy, colNum); // Used to simulate closeEnergy and store appropriate values within closeEnergy				
 				
-				index = ionCount + *totalIonsP;	//stores each ion in a unique location in the short/long filters			
+				impulseResponse(closeEnergy, measuredEnergy, respRange, maxSamples); // Applies the TBragg's mystery impulse response
+				index = ionCount + *totalIonsP;	// Stores each ion in a unique location in the short/long filters					
 
-				shortFilter[index] = energyFilters(closeEnergy, s_peakt, (int)(s_gapt / adcSampleRate), maxSamples);//applies the long filter 
-				longFilter[index] = energyFilters(closeEnergy, l_peakt, (int)(l_gapt / adcSampleRate), maxSamples);//applies the short filter
-				ionNum[*isotopeCountP] += 1;//keeping track of number of ions in the current file
+				//shortFilter[index] = energyFilters(closeEnergy, s_peakt, (int)(s_gapt / adcSampleRate), maxSamples); // applies the short filter 
+				//longFilter[index] = energyFilters(closeEnergy, l_peakt, (int)(l_gapt / adcSampleRate), maxSamples); // applies the long filter
+				shortFilter[index] = energyFilters(measuredEnergy, s_peakt, (int)(s_gapt / adcSampleRate), maxSamples); // applies the short filter 
+				longFilter[index] = energyFilters(measuredEnergy, l_peakt, (int)(l_gapt / adcSampleRate), maxSamples); // applies the long filter
+							
+
+				ionNum[*isotopeCountP] += 1; // keeping track of number of ions in the current file
 		
 				//printf("%d\t%f\t%f\t%d\n",index, shortFilter[index], longFilter[index], ionNum[*isotopeCountP]);
+								
+				for (int k = 0; k < arraySize; k++) { // Wipes clean any array that stores energy values to zero
+					// This is absolutely necessary for multiple isotopes!
+					// Higher-energy ions (which have more collisions and more data to store) will 
+					// not be overwritten by following lower-energy ions
+					E[k] = 0;
+					closeEnergy[k] = 0;
+					measuredEnergy[k] = 0;
+				}
 
 				readIon = false;
-				//(*ionNumP) += 1;
 				colNum = 0;
-			}
-			else 
-			{
+			} else {
 				readIon = false;
 			}
 		}	
 	}
-
 }
 
-float printValues (string ionName[], float ionMass[], float initialEnergy[], float shortFilter[], float longFilter[], int ionNum[], int isotopeCount)
-{//goes through all isotopes and prints both diagnostic values and filters
+float printValues (string ionName[], float ionMass[], float initialEnergy[], float shortFilter[], float longFilter[], int ionNum[], int isotopeCount) { 
 
-float 	averageShort;
-float	averageLong;
-int 	index, total = 0;//used to keep track of the total number of ions over all the files
+	float 	averageShort;
+	float	averageLong;
+	int 	index, total = 0; // Used to keep track of the total number of ions over all the files
 
-for ( int k = 0; k < isotopeCount; k++) //loops over values to allow for each initial conditions to be printed.
-{ 
+	ofstream fileOutData ("output_filter_data.txt"); // Raw number data from each run
+	ofstream fileOutInfo ("output_ion_info.txt"); // Ion Summary output information to be matched with the raw number data
 
-averageShort = 0;
-averageLong = 0;
+	fileOutData << "###### TBragg Simulation v6 -- Energy Filters Output ######" << endl;
+	fileOutData << "# To match the below index number with its respective isotope, please see output_ion_info.txt \n\n" << endl;
+	fileOutData << "Index \t Long Filter \t Short Filter" << endl;
 
-cout <<"#Ion Name : " << ionName[k] << endl;
-printf("#Ion Mass : %.3f u\n", ionMass[k]); 
-printf("#Initial Energy : %.0f keV\n",initialEnergy[k]);
-printf("#Energy per nucleon : %.3f keV/u\n", initialEnergy[k] / ionMass[k]);
-//fprintf("#Chamber Length : %f cm\n",maxLength);
+	fileOutInfo << "###### TBragg Simulation v6 -- Isotope information Summary ######\n\n" << endl;
+
+	for (int k = 0; k < isotopeCount; k++) { // Loops over values to allow for each initial conditions to be printed.
+		averageShort = 0;
+		averageLong = 0;
+
+		if (fileOutInfo.is_open()) {
+			fileOutInfo << "# Index #" << k + 1 << endl; // This number will match w/output_filter_data
+			fileOutInfo << "# Ion Name : " << ionName[k] << endl;
+			fileOutInfo << "# Ion Mass : " << ionMass[k] << "u" << endl;
+			fileOutInfo << "# Initial Energy : " << initialEnergy[k] << " keV" << endl;
+			fileOutInfo << "# Energy per nucleon : " << initialEnergy[k] / ionMass[k] << " keV/u" << endl;
+		}
+
+		cout << "# Ion Name : " << ionName[k] << endl;
+		cout << "# Ion Mass : " << ionMass[k] << "u" << endl;
+		cout << "# Initial Energy : " << initialEnergy[k] << " keV" << endl;
+		cout << "# Energy per nucleon : " << initialEnergy[k] / ionMass[k] << " keV/u" << endl;
+		
+		//printf("#Chamber Length : %f cm\n",maxLength);
 	
-		for (int j = 1; j < ionNum[k + 1] + 1; j++) //averages and prints the short and long values
-		{
-			index =	j + total;//the unique index where each value is stored
-
+		for (int j = 1; j < ionNum[k + 1] + 1; j++) { // Averages and prints the short and long values
+			index =	j + total; // The unique index where each value is stored
 			averageShort += shortFilter[index];
 			averageLong  += longFilter[index];
 			printf("%.2f, %.2f\n", longFilter[index], shortFilter[index]);
+
+			if (fileOutData.is_open()) {
+				fileOutData << k + 1 << "\t\t\t" << longFilter[index] << "\t\t\t" << shortFilter[index] << endl;
+			}
 		}
 
-averageShort = averageShort / ionNum[k + 1];// it is ionNum-1 since ionNum is originally defined as 1 instead of 0.
-averageLong = averageLong / ionNum[k + 1];
-total = total + ionNum[k + 1]; //used to keep track of the total number of ions over all the files
+		averageShort = averageShort / ionNum[k + 1]; // Is ionNum-1, as ionNum is originally defined as 1 instead of 0.
+		averageLong = averageLong / ionNum[k + 1];
+		total = total + ionNum[k + 1]; // To keep track of the total number of ions over all files
 
-printf("#There are %d ions in this file.\n", ionNum[k + 1]); //This assumes that there is the same number of ions in each file.
-printf("#AVG SHORT FILTER : %.2fkeV\n", averageShort);	
-printf("#AVG LONG FILTER : %.2fkeV\n\n", averageLong);
+		printf("#There are %d ions in this file.\n", ionNum[k + 1]); // Assumes that there is the same number of ions in each file.
+		printf("#AVG SHORT FILTER : %.2fkeV\n", averageShort);	
+		printf("#AVG LONG FILTER : %.2fkeV\n\n", averageLong);
 
+		if (fileOutData.is_open()) {
+			fileOutData << endl; // Add an extra space between ions (easier to read later)
+		}
+
+		if (fileOutInfo.is_open()) {
+			fileOutInfo << "# There are " << ionNum[k + 1] << " ions in this file." << endl;
+			fileOutInfo << "# AVG SHORT FILTER: \t" << averageShort << " keV" << endl;
+			fileOutInfo << "# AVG LONG FILTER: \t" << averageLong << " keV \n" << endl;
+		}
+	}
+
+	fileOutData.close();
+	fileOutInfo.close();
 }
-}
 
-int setConstants (char* itemName[], int *iP, float *adcSampleRateP, float *l_peaktP, float *l_gaptP, float *s_peaktP, float *s_gaptP, float *driftVelP, float *minDepthP, float *maxDepthP)
-{//takes in constant values from command lines and sets them appropriately
+int setConstants (char *itemName[], int *iP, float *adcSampleRateP, float *l_peaktP, float *l_gaptP, float *s_peaktP, float *s_gaptP, float *driftVelP, float *driftVelFschAnP, float *minDepthP, float *maxDepthP, float *fschDistP, int *respRangeP) { 
 
-*iP += 1;//increases i to skip next loop as well as store value that comes afterwards	
-string parameter = itemName[*iP - 1];//converts the argv into a string again
-	if ( parameter.substr(2,13) == "adcSampleRate")
-	{
+	*iP += 1; // Increases i to skip next loop as well as store value that comes afterwards	
+	string parameter = itemName[*iP - 1]; // converts the argv into a string again
+
+	if (parameter.substr(2,13) == "adcSampleRate")	{
 		*adcSampleRateP = atof(itemName[*iP]);
 		//printf("%f\n",*adcSampleRateP);
 	}
 
-	if ( parameter.substr(2,7) == "l_peakt")
-	{
+	if (parameter.substr(2,7) == "l_peakt") {
 		*l_peaktP = atof(itemName[*iP]);
 		//printf("%f\n",*l_peaktP);
 	}
 
-	if ( parameter.substr(2,6) == "l_gapt")
-	{
+	if (parameter.substr(2,6) == "l_gapt")	{
 		*l_gaptP = atof(itemName[*iP]);
 		//printf("%f\n",*l_gaptP);
 	}
 
-	if ( parameter.substr(2,7) == "s_peakt")
-	{
+	if (parameter.substr(2,7) == "s_peakt") {
 		*s_peaktP = atof(itemName[*iP]);
 		//printf("%f\n",*s_peaktP);
 	}
 
-	if ( parameter.substr(2,6) == "s_gapt")
-	{
+	if (parameter.substr(2,6) == "s_gapt")	{
 		*s_gaptP = atof(itemName[*iP]);
 		//printf("%f\n",*s_gaptP);
 	}
 
-	if ( parameter.substr(2,8) == "driftVel")
-	{
+	if (parameter.substr(2,8) == "driftVel") {
 		*driftVelP = atof(itemName[*iP]);
 		//printf("%f\n",*driftVelP);
 	}
 
-	if ( parameter.substr(2,8) == "minDepth")
-	{
+	if (parameter.substr(2,14) == "driftVelFschAn") {
+		*driftVelFschAnP = atof(itemName[*iP]);
+		//printf("%f\n",*driftVelFschAnP);
+	}
+
+	if (parameter.substr(2,8) == "minDepth") {
 		*minDepthP = atof(itemName[*iP]);
 		//printf("%f\n",*minDepthP);
 	}
 
-	if ( parameter.substr(2,8) == "maxDepth")
-	{
+	if (parameter.substr(2,8) == "maxDepth") {
 		*maxDepthP = atof(itemName[*iP]);
 		//printf("%f\n",*maxDepthP);
 	}
+
+	if (parameter.substr(2,8) == "fschDist") {
+		*fschDistP = atof(itemName[*iP]);
+		//printf("%f\n",*fschDistP);
+	}
+
+	if (parameter.substr(2,8) == "respRange") {
+		*respRangeP = atof(itemName[*iP]);
+		//printf("%f\n",*respRangeP);
+	}
 }
 
-int main(int argc, char* argv[])
-{
+int main(int argc, char* argv[]) {
+	float	shortFilter[arraySize]; // Returned short values from filters for each ion
+	float 	longFilter[arraySize]; // Returned long values from filters for each ion
 
-float	shortFilter[arraySize];//returned short values from filters for each ion
-float 	longFilter[arraySize];//returned long values from filters for each ion
+	int 	ionNum[arraySize]; // Number of ions (total value over all files in the case of cat command)
+	int	isotopeCount = 0; // Used to count number of isotopes when using the cat command
+	int	totalIons = 0; // Used to keep track of the total ions over all of the files. Needs to be set here so it doesn't reset when using "./TBraggSimulation" input method (see arg loop)
+	string 	fileName;
+	float 	initialEnergy[arraySize]; // Initial energy for all of the ions
+	float 	ionMass[arraySize]; // Mass of the ion
+	string *ionName = new string[arraySize];
 
-int 	ionNum[arraySize]; //number of ions (total value over all files in the case of cat command)
-int	isotopeCount = 0; //used to count number of isotopes when using the cat command
-int	totalIons = 0;//used to keep track of the total ions over all of the files. Needs to be set here so it doesn't reset when using "./TBraggSimulation" input method (see arg loop)
-string 	fileName;
-float 	initialEnergy[arraySize]; //initial energy for all of the ions
-float 	ionMass[arraySize]; //mass of the ion
-//string 	ionName[arraySize]; //name of the ion (element)
-string *ionName = new string[arraySize];
-	if (argc > 1) //reads through the number of files after the executable call of format "./TBraggSimulation Si28.txt Mo95.txt ..."
-	{
-		for (int i = 1; i < argc; i++)//looping over each argument in the above executable call
-		{			
-			string argv_ = argv[i]; //converts the argument to a string so it is easier to manipulate 
+	if (argc > 1) { // Reads through the number of files after the executable call of format "./TBraggSimulation Si28.txt Mo95.txt ..."
+		for (int i = 1; i < argc; i++) { // Looping over each argument in the above executable call
+			string argv_ = argv[i]; // Converts the argument to a string so it is easier to manipulate 
 		
-			if (strcmp (argv_.substr(0,2).c_str(), "--") == 0) //determining if there is a command to set a parameter
-			{
-			 	setConstants(argv, &i, &adcSampleRate, &l_peakt, &l_gapt, &s_peakt, &s_gapt, &driftVel, &minDepth, &maxDepth); 
-				//accesses subroutine to define parameter called upon. More parameters can be easily added to this subroutine.		
-			}
-	
-			else
-			{ 
+			if (strcmp(argv_.substr(0,2).c_str(), "--") == 0) { // Determining if there is a command to set a parameter
+			 	setConstants(argv, &i, &adcSampleRate, &l_peakt, &l_gapt, &s_peakt, &s_gapt, &driftVel, &driftVelFschAn, &minDepth, &maxDepth, &fschDist, &respRange); 
+				// Accesses subroutine to define parameter called upon. More parameters can be easily added to this subroutine.		
+			} else { 
 				fileName = argv_;	
 				ifstream myfile; 	
 				myfile.open(fileName.c_str());
 		
-				if( myfile.is_open() ) //reads that the file is open and completes the subroutine
-				{
+				if(myfile.is_open()) { // Reads that the file is open and completes the subroutine
 					processSRIMData(myfile, shortFilter, longFilter, ionName, ionMass, initialEnergy, ionNum, &totalIons, &isotopeCount);
 				}
 			}	
 		}
-		printValues(ionName, ionMass, initialEnergy, shortFilter, longFilter, ionNum, isotopeCount);//to allow for loop to perform properly with stored values in the array
-	}
 
-	else //processes and prints values from the line "cat filename (multiple) | ./TBraggSimulation"
-	{
+		printValues(ionName, ionMass, initialEnergy, shortFilter, longFilter, ionNum, isotopeCount); // To allow for loop to perform properly with stored values in the array
+
+	} else { // Processes and prints values from the line "cat filename (multiple) | ./TBraggSimulation"
 		processSRIMData(cin, shortFilter, longFilter, ionName, ionMass, initialEnergy, ionNum, &totalIons, &isotopeCount);
 		printValues(ionName, ionMass, initialEnergy, shortFilter, longFilter, ionNum, isotopeCount);
 	}
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
