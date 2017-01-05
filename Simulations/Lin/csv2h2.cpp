@@ -3,13 +3,18 @@
  * g++ csv2h2.cpp -o csv2h2 `root-config --cflags --libs`    ----------  compile line
  * Must be run with data piped in from TBragg Simulation:
  * ./TBraggSimulation <collision file> | ./csv2h2
+ * Parameters can no be changed with simple symbols after calling the program.
+ * ./TBraggSimulation <collision file> | ./csv2h2 -o example.root
+ * -o : sets root file name
+ * -nx/-ny : sets the bin size in x and y
+ * -rx/-ry : sets the range in x and y
 */
 
 
 /**
  * File: csv2h2.cpp
- * Last Modified By: Alex Kurkjian
- * Date: 10/08/2016
+ * Last Modified By: Owen Paetkau
+ * Date: 29/09/2016
  * Purpose: This program simply pulls the data from the output of the TBragg simulation and plots
  * 	on a histogram using ROOT.
 **/
@@ -42,41 +47,56 @@ float maxx = 200000;
 float maxy = 100000; // Some default values which may be adjusted later
 int xbins  = 5000;
 int ybins  = 5000;
+int i = 0;
+string name = "graph.root";
 
 int main(int argc, const char* argv[]) { 
+
+	if (argc > 1){
+
+		while (i < argc) {
+
+			if (strcmp(argv[i], "-o") == 0)
+			{
+				i++;
+				name = argv[i];
+				cout << name << endl;
+			}
+
+			if (strcmp(argv[i], "-nx") == 0)
+			{
+				i++;
+				xbins = atof(argv[i]);
+			}
+
+			if (strcmp(argv[i], "-ny") == 0)
+			{
+				i++;
+				ybins = atof(argv[i]);
+			}
+
+			if (strcmp(argv[i], "-rx") == 0)
+			{
+				i++;
+				maxx = atof(argv[i]);
+			}
+
+			if (strcmp(argv[i], "-ry") == 0)
+			{
+				i++;
+				maxy = atof(argv[i]);
+			}
+
+			i++;	
+		}
+	}
+
+
 	TApplication *app = new TApplication("app",0,0);
-	TFile* outFile = new TFile("graph.root", "RECREATE");
+	TFile* outFile = new TFile(name.c_str(), "RECREATE");
 	TCanvas *c1 = new TCanvas("c1","TBRAGG Simulation",200,10,700,500);
 	TH2F* histo;
 
-	
-	if (argc == 2)
-	{
-		maxx = atof(argv[1]);
-		maxy = atof(argv[1]);
-	}	
-
-	if (argc == 3)
-	{
-		maxx = atof(argv[1]);
-		maxy = atof(argv[2]);
-	}	
-
-	if (argc == 4)
-	{
-		maxx = atof(argv[1]);
-		maxy = atof(argv[2]);
-		xbins = atoi(argv[3]);
-		ybins = atoi(argv[4]);
-	}	
-
-	if (argc == 5)
-	{
-		maxx = atof(argv[1]);
-		maxy = atof(argv[2]);
-		xbins = atoi(argv[3]);
-		ybins = atoi(argv[4]);
-	}
 
 	histo = new TH2F("PID","Particle Identification Plot",xbins,minx,maxx,ybins,miny,maxy);
 	//histo->SetXTitle("Long Filter"); 

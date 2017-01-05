@@ -10,10 +10,10 @@
 **/
 
 /**
- * Program Name: TBragg Simulation, v6
+ * Program Name: TBragg Simulation, v7
  * File: TBraggSimulation.cpp
- * Last Modified By: Alex Kurkjian
- * Date: 26/08/2016
+ * Last Modified By: Owen Paetkau
+ * Date: 01/12/2016
  * Purpose: This program is meant to take ion collision data (as simulated in SRIM/TRIM) and apply  
  * 	short and long energy filters to approximate energy and shape of the Bragg peak. The idea is to 
  * 	be able to simulate particle identification using the TBragg detector with multiple isotopes of 
@@ -21,13 +21,20 @@
  * 	simulation is to determine if the expected constituents of a cocktail beam will be 
  *	distinguishable, and thus will help determine what to expect for beam tuning and the 
  * 	performance of diagnostics.
- * Changes from Previous Version (v5):
+ * Changes from Previous Version (v6) (Owen Paetkau):
+ *	- Commented out the impulseResponse due to error in averaging.
+ * 	- Changed window2 in energyFilters to create proper distance between windows.
+ *	- Also widened the range of the windows so it reaches before and after the simulated data set.
+ *		--> This is more accurate for simulation and more closely matched measured values.
+ *	- It is important to ensure the proper drift velocity. Any data taken from before October 5th, 2016
+ *	  should be simulated with a drift velocity of 4.8cm/us while anything afterwards uses 6.6cm/us.
+ * Changes from Previous Version (v5) (Alex Kurkijan):
  * 	- Adjusted maxDepth to represent proper depth for the TBragg detector (10.00 cm)
  *	- Implemented a new effDepth which is meant to simulate the different drift velocities between the 
  *	  Frisch grid and anode, in comparison to between the Mylar window and the Frisch grid
  *		--> Should note that while this may more accurately simulate the TBragg, it has little
  *			noticeable effect in the simulation results
- *  - Added an impulse response function more effectively simulate the more gradual curve that results 
+ *  	- Added an impulse response function more effectively simulate the more gradual curve that results 
  * 	  in the PID charts from the TBragg detector.
  *		--> Implements a simple moving average over the energy values. The number of energy values 
  * 			sampled in the moving average can be changed. 
@@ -54,23 +61,26 @@
 #include <string>
 
 using namespace std;
-float	adcSampleRate = 0.02;			// Sample rate in microseconds
-float 	l_peakt = 0.5; 					// Long peak time in microseconds
-float 	l_gapt = 4.5; 					// Long gap time in microseconds
-float 	s_peakt = 0.14; 				// Short peak tme in microseconds
-float 	s_gapt = 0.24; 					// Short gap time in microseconds
-float 	driftVel = 4.8;					// Drift velocity in cm/usec for most of the tube
-float 	driftVelFschAn = 4.8; 			// Drift velocity in cm/usec between Frisch grid and Anode
+float	adcSampleRate = 0.02;				// Sample rate in microseconds
+float 	l_peakt = 0.5;					// Long peak time in microseconds (isobutane - 4, CH4 - 0.5, P-8 - 0.5)
+float 	l_gapt = 4.5;					// Long gap time in microseconds (isobutane - 2, CH4 - 4, P-8 - 4.5)
+float 	s_peakt = 0.14;					// Short peak tme in microseconds (isobutane - 1, CH4 - 0.14, P-8 - 0.14)
+float 	s_gapt = 0.24;					// Short gap time in microseconds (isobutane - 0.2, CH4 - 0.10, P-8 - 0.24)
+//float 	driftVel = 6.6;					// Drift velocity in cm/usec for most of the tube (isobutane - 2.5, CH4 - 9, P-8 - 4.8)
+float 	driftVel = 6.77;				// NOTE: Above value is prior to Oct 5th, 2016, below is afterwards.
+//float 	driftVelFschAn = 6.6; 				// Drift velocity in cm/usec between Frisch grid and Anode (isobutane - 2.5, CH4 - 9, P-8 - 4.8)
+float 	driftVelFschAn = 6.77;			// NOTE: Above value is prior to Oct 5th, 2016, below is afterwards.
 float 	minDepth = 15000; 				// Beginning of active volume in angstroms
-float 	maxDepth = 10.00; 				// Chamber length in centimetres
+float 	maxDepth = 10; 					// Chamber length in centimetres
 float 	fschDist = 0.01; 				// Distance from Frisch Grid to Anode in centimeters 
-float 	effDepth = maxDepth-fschDist; 	// Effective Depth of the ionization chamber
+float 	effDepth = maxDepth-fschDist;		 	// Effective Depth of the ionization chamber
 int   	conver = 100000000;	 			// Converting centimeters to angstroms
 int   	arraySize = 10000; 				// Size of all arrays in this program 
-										// (potential segmentation fault if not large enough)
+							// (potential segmentation fault if not large enough)
 int 	respRange = 35;					// Impulse response sample range
 int   	maxSamples = (int) (effDepth/(driftVel*adcSampleRate) 
 			+ fschDist/(driftVelFschAn*adcSampleRate)); // Maximum samples allowed due to the adc
+
 
 
 float average (float energyValues[], int pos, float peakt) { 
@@ -101,7 +111,7 @@ float average (float energyValues[], int pos, float peakt) {
 
 float sampledEnergies (float ionDistance[], float ionEnergy[], float closeEnergy[], int collisionNum) { 
 	float 	simPos[arraySize]; 	// Simulated position according to sample rate and chamber length
-	float	samTime[arraySize]; // Simulated time according to sample rate and chamber length
+	float	samTime[arraySize]; 	// Simulated time according to sample rate and chamber length
 	float	anodeDistance;		// Distance from the anode
 	int 	fschCount, loopCount;
 
@@ -146,15 +156,13 @@ float sampledEnergies (float ionDistance[], float ionEnergy[], float closeEnergy
 } 
 
 
-float impulseResponse (float energyArray[], float responseArray[], int responseRange, int nsamples) { 
+/*float impulseResponse (float energyArray[], float responseArray[], int responseRange, int nsamples) { 
 	float	sum = 0;	
-	int 	k, l;
-
 	
 		// Simple moving average			
-		for (k = 0; k < nsamples; k++) { // Loop for each possible index of the impulse response
+		for (int k = 0; k < nsamples; k++) { // Loop for each possible index of the impulse response
 			// The following performs a similar function to the above average() function
-			for (l = k - responseRange; l < k; l++) { // loop through and summ the energy values within the range of the impulse response
+			for (int l = k - responseRange; l < k; l++) { // loop through and summ the energy values within the range of the impulse response
 				if (l < 0) {
 					sum = sum;
 					//sum += energyArray[0];
@@ -167,28 +175,29 @@ float impulseResponse (float energyArray[], float responseArray[], int responseR
 				}
 			}			
 		
-			responseArray[k] = (sum / responseRange );
+			responseArray[k] = (sum / responseRange);
 			//printf("i = %d\t Actual Energy = %.2f\t Impulse average = %.2f\n", k, energyArray[k], responseArray[k]);
 			sum = 0;
 		} 	
 	
 
-} 
+} */
 
-float energyFilters (float energyArray[], float peakt, int gapt, int nsamples) { // Long or short filter is determined from peak and gap times
+float energyFilters (float energyArray[], float peakt, float gapt, int nsamples) { // Long or short filter is determined from peak and gap times
 	float	difference = 0;
 	float 	maxValue = 0;
 	float	window1;
 	float 	window2;	
 
-	for (int i = -5; i < nsamples; i++) { // Subtracted a value to give more complete samples on either side of the curve
-		window1 = average(energyArray, i, peakt);
-		window2 = average(energyArray, i + gapt, peakt);
+	//printf("%.2f\t%.2f\n",peakt,gapt);
+	for (int i = - 1000; i < nsamples + 500; i++) { // Subtracted a value to give more complete samples on either side of the curve
+		window1 = average(energyArray, i, peakt); //creates the first window
+		window2 = average(energyArray, i + (int)((gapt + peakt)/adcSampleRate), peakt); //creates the second window
 
 		difference = window1 - window2;
 
 		//printf("%f\t%f\n",energyArray[i],window1);
-		//printf("window1 - window2 = %.2f - %.2f = %.2f\n", window1, window2, difference);
+		//printf("%d window1 - window2 = %.2f - %.2f = %.2f\n", i, window1, window2, difference);
 
 		if (difference > maxValue) {
 			maxValue = difference;
@@ -200,7 +209,7 @@ float energyFilters (float energyArray[], float peakt, int gapt, int nsamples) {
 
 float processSRIMData (istream& srimCollisionDataSource, float shortFilter[], float longFilter[], string ionName[], float ionMass[], float initialEnergy[], int ionNum[], int *totalIonsP, int *isotopeCountP) { // IonMass, ionNum, initialEnergy and ionName written to arrays to account for multiple isotopes (ie., files)
 
-	float 	X[arraySize]; // Array of positions from text file
+	float 	X[arraySize]; // Array of posi(int)(s_gapt / adcSampleRate)tions from text file
 	float 	E[arraySize]; // Array of energies from text file
 	float	closeEnergy[arraySize]; // Energies drawn from the text file corresponding to the decided distances
 	float 	measuredEnergy[arraySize]; // Energies "measured" after convultions from the Frisch grid or preamp
@@ -243,13 +252,13 @@ float processSRIMData (istream& srimCollisionDataSource, float shortFilter[], fl
 			if ( readIon == true ) { // When end of ion is reached
 				sampledEnergies(X, E, closeEnergy, colNum); // Used to simulate closeEnergy and store appropriate values within closeEnergy				
 				
-				impulseResponse(closeEnergy, measuredEnergy, respRange, maxSamples); // Applies the TBragg's mystery impulse response
+				//impulseResponse(closeEnergy, measuredEnergy, respRange, maxSamples); // Applies the TBragg's mystery impulse response
 				index = ionCount + *totalIonsP;	// Stores each ion in a unique location in the short/long filters					
 
-				//shortFilter[index] = energyFilters(closeEnergy, s_peakt, (int)(s_gapt / adcSampleRate), maxSamples); // applies the short filter 
-				//longFilter[index] = energyFilters(closeEnergy, l_peakt, (int)(l_gapt / adcSampleRate), maxSamples); // applies the long filter
-				shortFilter[index] = energyFilters(measuredEnergy, s_peakt, (int)(s_gapt / adcSampleRate), maxSamples); // applies the short filter 
-				longFilter[index] = energyFilters(measuredEnergy, l_peakt, (int)(l_gapt / adcSampleRate), maxSamples); // applies the long filter
+				shortFilter[index] = energyFilters(closeEnergy, s_peakt, s_gapt, maxSamples); // applies the short filter  (without the impulse response)
+				longFilter[index] = energyFilters(closeEnergy, l_peakt, l_gapt, maxSamples); // applies the long filter  (without the impulse response)
+				//shortFilter[index] = energyFilters(measuredEnergy, s_peakt, s_gapt, maxSamples); // applies the short filter (with the impulse response)
+				//longFilter[index] = energyFilters(measuredEnergy, l_peakt, l_gapt, maxSamples); // applies the long filter (with the impulse response)
 							
 
 				ionNum[*isotopeCountP] += 1; // keeping track of number of ions in the current file
@@ -366,6 +375,7 @@ int setConstants (char *itemName[], int *iP, float *adcSampleRateP, float *l_pea
 		*s_peaktP = atof(itemName[*iP]);
 		//printf("%f\n",*s_peaktP);
 	}
+
 
 	if (parameter.substr(2,6) == "s_gapt")	{
 		*s_gaptP = atof(itemName[*iP]);
